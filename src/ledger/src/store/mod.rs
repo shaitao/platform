@@ -540,6 +540,32 @@ impl LedgerState {
         [a0, a1]
     }
 
+    /// Return rate definition for delegation rewards.
+    #[inline(always)]
+    pub fn real_staking_get_block_rewards_rate(&self) -> [u128; 2] {
+        let p = [
+            self.get_staking().get_global_delegation_amount(),
+            self.real_staking_get_global_unlocked_amount(),
+        ];
+        let p = [p[0] as u128, p[1] as u128];
+
+        // This is an equal conversion of `1 / p% * 0.0201`
+        let mut a0 = p[1] * 201;
+        let mut a1 = p[0] * 10000;
+
+        if a0 * 100 > a1 * 105 {
+            // max value: 105%
+            a0 = 105;
+            a1 = 100;
+        } else if a0 * 50 < a1 {
+            // min value: 2%
+            a0 = 2;
+            a1 = 100;
+        }
+
+        [a0, a1]
+    }
+
     /// Total amount of all freed FRAs, aka 'are not being locked'.
     #[inline(always)]
     pub fn staking_get_global_unlocked_amount(&self) -> Amount {
@@ -562,6 +588,22 @@ impl LedgerState {
                 .iter()
                 .chain(extras.iter())
                 .map(|pk| self.staking_get_nonconfidential_balance(pk).unwrap_or(0))
+                .sum::<Amount>()
+            - s.coinbase_balance()
+    }
+
+    /// Total amount of all freed FRAs, aka 'are not being locked'.
+    #[inline(always)]
+    pub fn real_staking_get_global_unlocked_amount(&self) -> Amount {
+        let s = self.get_staking();
+
+        let extras = vec![*BLACK_HOLE_PUBKEY, *FF_PK_EXTRA_120_0000];
+
+        FRA_TOTAL_AMOUNT
+            - FF_PK_LIST
+                .iter()
+                .chain(extras.iter())
+                .map(|pk| self.get_nonconfidential_balance(pk).unwrap_or(0))
                 .sum::<Amount>()
             - s.coinbase_balance()
     }

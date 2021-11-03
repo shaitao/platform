@@ -422,11 +422,15 @@ pub async fn get_circulating_supply(
     let cs = l.ledger_cloned.staking_get_global_unlocked_amount() as f64 / fra;
     let gd = l.ledger_cloned.get_staking().get_global_delegation_amount() as f64 / fra;
     let rr = l.ledger_cloned.staking_get_block_rewards_rate();
+    let rr_real = l.ledger_cloned.real_staking_get_block_rewards_rate();
     let rr = rr[0] as f64 / rr[1] as f64;
+    let rr_real = rr_real[0] as f64 / rr_real[1] as f64;
 
     let res = map! { B
         "global_return_rate" => rr,
+        "real_global_return_rate" => rr_real,
         "global_circulating_supply" => cs,
+        "real_global_circulating_supply" => l.ledger_cloned.real_staking_get_global_unlocked_amount() as f64 / fra,
         "global_delegation_amount" => gd
     };
 
