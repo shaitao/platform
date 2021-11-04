@@ -89,7 +89,8 @@ tendermint_goleveldb:
 
 test:
 	cargo test --release --workspace -- --test-threads=1 # --nocapture
-
+	cargo doc
+	
 testall:
 	cargo test --release --features="abci_mock" -- --test-threads=1 # --nocapture
 
