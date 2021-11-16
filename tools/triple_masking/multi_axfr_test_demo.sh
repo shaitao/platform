@@ -17,21 +17,19 @@ set -e
 
 echo "\n\n\n Bar To Abar Conversion 2"
 sleep 10
-target/release/fn convert-bar-to-abar --anon-keys ./anon-keys-temp2.keys  --txo-sid 9 2> /dev/null
-sleep 10
 target/release/fn convert-bar-to-abar --anon-keys ./anon-keys-temp2.keys  --txo-sid 6 2> /dev/null
 #echo "\n\n\n Bar To Abar Conversion 3"
 #sleep 10
-#target/release/fn convert-bar-to-abar --anon-keys ./anon-keys-temp2.keys  --txo-sid 12
+#target/release/fn convert-bar-to-abar --anon-keys ./anon-keys-temp2.keys  --txo-sid 9 2> /dev/null
 
 tail -n 2 randomizers > randomizer_file
 randomiser=$(awk 'FNR>=1 && FNR<=1' randomizer_file)
 echo "\n\n Owned Abars after Bar to Abar conversion 1"
-sleep 20
+sleep 25
 target/release/fn owned-abars -p evHEjxtneSR-bEHuhEGov7Qg0hZSFhPxBP0QrYi1IG4= -r $randomiser
 randomiser=$(awk 'FNR>=2 && FNR<=2' randomizer_file)
 echo "\n\n Owned Abars after Bar to Abar conversion 2"
-sleep 20
+sleep 25
 target/release/fn owned-abars -p Acm95UNobBt9arsz_-nKmxLIa45CYP1oSMszxFAmkM0= -r $randomiser
 #randomiser=$(awk 'FNR>=3 && FNR<=3' randomizer_file)
 #echo "\n\n Owned Abars after Bar to Abar conversion 3"
@@ -51,7 +49,7 @@ e9d0qy8z2D3npp-pfXNcnolZBYXik6m0GhnDjK5Hvnk=
 VU3YEMaEqXDs5yA27s1IDUPrT-hHxK2xHM9UIA7EyVU=" > to_enc_key_file
 echo "100000000
 200000000
-120000000" > amount_file
+119980000" > amount_file
 
 echo "\n\n\n Batch Anonymous Transfer from Senders to Receivers"
 echo "------------------------------------------------------------------------------"
@@ -61,12 +59,12 @@ target/release/fn anon-transfer-batch -n amount_file -s axfr_secretkey_file -d d
 tail -n 3 randomizers > randomizer_file
 randomiser=$(awk 'FNR>=1 && FNR<=1' randomizer_file)
 echo "\n\n Owned Abars for Receiver1 after Batch Anon Transfer"
-sleep 20
+sleep 30
 target/release/fn owned-abars -p 1ASVNYLgW2SzBEmAnHfaiJwVBd0M72aRhcReJluZo9M= -r $randomiser
 
 randomiser=$(awk 'FNR>=3 && FNR<=3' randomizer_file)
 echo "\n\n Owned Abars for Receiver3 after Batch Anon Transfer"
-sleep 20
+sleep 30
 target/release/fn owned-abars -p IEJkCPKple-s18YzlKQkSj-rBdXKvbPFSRssUHgXtVE= -r $randomiser
 
 sleep 2

@@ -20,20 +20,20 @@ set -e
 
 echo "\n\n\n Anonymous Transfer from Sender1 to Receiver1"
 echo "------------------------------------------------------------------------------"
-target/release/fn anon-transfer --amount 210000000 --anon-keys ./anon-keys-temp.keys --to-axfr-public-key Acm95UNobBt9arsz_-nKmxLIa45CYP1oSMszxFAmkM0= --to-enc-key 0MTSVCEvwoVfW3NirjENvAuXtjTyBHYWE283c_i_C1Y= --randomizer $randomiser
+target/release/fn anon-transfer --amount 209990000 --anon-keys ./anon-keys-temp.keys --to-axfr-public-key Acm95UNobBt9arsz_-nKmxLIa45CYP1oSMszxFAmkM0= --to-enc-key 0MTSVCEvwoVfW3NirjENvAuXtjTyBHYWE283c_i_C1Y= --randomizer $randomiser
 
 randomiser=$(tail -n 1 randomizers)
 echo "\n\n Owned Abars for Receiver1 after Anon Transfer 1"
-sleep 20
+sleep 25
 target/release/fn owned-abars -p Acm95UNobBt9arsz_-nKmxLIa45CYP1oSMszxFAmkM0= -r $randomiser
 
 echo "\n\n\n Anonymous Transfer from Receiver1 (Sender2) to Receiver2"
 echo "------------------------------------------------------------------------------"
-target/release/fn anon-transfer --amount 210000000 --anon-keys ./anon-keys-temp2.keys --to-axfr-public-key 1ASVNYLgW2SzBEmAnHfaiJwVBd0M72aRhcReJluZo9M= --to-enc-key S9xkhvejemaNuzzZB0l5NnTf9l2Xt4nurnlKiRsPBB8= --randomizer $randomiser
+target/release/fn anon-transfer --amount 209990000 --anon-keys ./anon-keys-temp2.keys --to-axfr-public-key 1ASVNYLgW2SzBEmAnHfaiJwVBd0M72aRhcReJluZo9M= --to-enc-key S9xkhvejemaNuzzZB0l5NnTf9l2Xt4nurnlKiRsPBB8= --randomizer $randomiser
 
 randomiser=$(tail -n 1 randomizers)
 echo "\n\n Owned Abars for Receiver2 after Anon Transfer 2"
-sleep 20
+sleep 25
 target/release/fn owned-abars -p 1ASVNYLgW2SzBEmAnHfaiJwVBd0M72aRhcReJluZo9M= -r $randomiser
 
 sleep 2
