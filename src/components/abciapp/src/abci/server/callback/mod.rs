@@ -2,6 +2,7 @@
 //! # Impl function of tendermint ABCI
 //!
 
+mod checkpoint;
 mod utils;
 
 use {
@@ -18,9 +19,9 @@ use {
         ResponseBeginBlock, ResponseCheckTx, ResponseCommit, ResponseDeliverTx,
         ResponseEndBlock, ResponseInfo, ResponseInitChain, ResponseQuery,
     },
+    checkpoint::state_checkpoint,
     config::abci::global_cfg::CFG,
     fp_storage::hash::{Sha256, StorageHasher},
-    lazy_static::lazy_static,
     ledger::{
         converter::is_convert_account,
         staking::KEEP_HIST,
@@ -393,6 +394,7 @@ pub fn end_block(
 pub fn commit(s: &mut ABCISubmissionServer, req: &RequestCommit) -> ResponseCommit {
     let la = s.la.write();
     let mut state = la.get_committed_state().write();
+    state_checkpoint(&state);
 
     // will change `struct LedgerStatus`
     let td_height = TENDERMINT_BLOCK_HEIGHT.load(Ordering::Relaxed);

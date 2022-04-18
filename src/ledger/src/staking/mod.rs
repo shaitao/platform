@@ -215,12 +215,12 @@ pub struct Staking {
     // - the new validator inherits the original vote power, if any
     #[serde(rename = "vi")]
     validator_info: ValidatorInfo,
-    // when the end-time of delegations arrived,
-    // we will try to paid the rewards until all is successful.
+    /// when the end-time of delegations arrived,
+    /// we will try to paid the rewards until all is successful.
     #[serde(rename = "di")]
-    pub(crate) delegation_info: DelegationInfo,
-    // current block height in the context of tendermint.
-    pub(crate) cur_height: BlockHeight,
+    pub delegation_info: DelegationInfo,
+    /// current block height in the context of tendermint.
+    pub cur_height: BlockHeight,
     // FRA CoinBase.
     coinbase: CoinBase,
     cr: ConsensusRng,
@@ -1752,8 +1752,8 @@ pub struct ValidatorData {
     pub(crate) cosig_rule: CoSigRule,
     /// major data of validators.
     pub body: BTreeMap<XfrPublicKey, Validator>,
-    // <tendermint validator address> => XfrPublicKey
-    addr_td_to_app: BTreeMap<TendermintAddr, XfrPublicKey>,
+    /// <tendermint validator address> => XfrPublicKey
+    pub addr_td_to_app: BTreeMap<TendermintAddr, XfrPublicKey>,
 }
 
 impl Default for ValidatorData {
@@ -1842,17 +1842,17 @@ impl ValidatorData {
     }
 }
 
-// the same address is not allowed to delegate twice at the same time,
-// so it is feasible to use `XfrPublicKey` as the map key.
+/// the same address is not allowed to delegate twice at the same time,
+///so it is feasible to use `XfrPublicKey` as the map key.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct DelegationInfo {
+pub struct DelegationInfo {
     pub(crate) global_amount: Amount,
-    // validator pubkey => delegation info
-    // addr_map contains an entry for every delegation on the network .
-    // Self Delegations and Regular Delegation
+    /// validator pubkey => delegation info
+    /// addr_map contains an entry for every delegation on the network .
+    /// Self Delegations and Regular Delegation
     #[serde(rename = "addr_map")]
-    pub(crate) global_delegation_records_map: BTreeMap<XfrPublicKey, Delegation>,
-    pub(crate) end_height_map: BTreeMap<BlockHeight, BTreeSet<XfrPublicKey>>,
+    pub global_delegation_records_map: BTreeMap<XfrPublicKey, Delegation>,
+    end_height_map: BTreeMap<BlockHeight, BTreeSet<XfrPublicKey>>,
 }
 
 impl DelegationInfo {
