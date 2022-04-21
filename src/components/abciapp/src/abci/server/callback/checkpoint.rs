@@ -9,7 +9,11 @@ use std::collections::HashMap;
 
 lazy_static! {
     pub static ref RUNTIME: Runtime = Runtime::new().unwrap();
-    pub static ref PG_POOL: SqlxPgPool = RUNTIME.block_on(db::connect()).unwrap();
+    pub static ref PG_POOL: SqlxPgPool = {
+        let pool = RUNTIME.block_on(db::connect()).unwrap();
+        println!("Connecting database succeeded.");
+        pool
+    };
 }
 
 use ledger::staking::DelegationState;

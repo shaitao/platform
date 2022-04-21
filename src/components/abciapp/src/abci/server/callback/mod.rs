@@ -2,8 +2,8 @@
 //! # Impl function of tendermint ABCI
 //!
 
-mod checkpoint;
 mod utils;
+mod checkpoint;
 
 use {
     crate::{
@@ -19,12 +19,12 @@ use {
         ResponseBeginBlock, ResponseCheckTx, ResponseCommit, ResponseDeliverTx,
         ResponseEndBlock, ResponseInfo, ResponseInitChain, ResponseQuery,
     },
-    checkpoint::state_checkpoint,
     config::abci::global_cfg::CFG,
     fp_storage::hash::{Sha256, StorageHasher},
+    lazy_static::lazy_static,
     ledger::{
         converter::is_convert_account,
-        staking::KEEP_HIST,
+        staking::{Delegation, TendermintAddr, KEEP_HIST},
         store::{
             api_cache,
             fbnc::{new_mapx, Mapx},
@@ -33,7 +33,10 @@ use {
     parking_lot::{Mutex, RwLock},
     protobuf::RepeatedField,
     ruc::*,
+    serde::Serialize,
+    serde_json::json,
     std::{
+        collections::BTreeMap,
         fs,
         ops::Deref,
         sync::{
@@ -41,6 +44,8 @@ use {
             Arc,
         },
     },
+    zei::xfr::sig::XfrPublicKey,
+    checkpoint::state_checkpoint,
 };
 
 pub(crate) static TENDERMINT_BLOCK_HEIGHT: AtomicI64 = AtomicI64::new(0);
@@ -52,6 +57,11 @@ lazy_static! {
     // avoid on-chain-existing transactions to be stored again
     static ref TX_HISTORY: Arc<RwLock<Mapx<Vec<u8>, bool>>> =
         Arc::new(RwLock::new(new_mapx!("tx_history")));
+
+    static ref ENABLE_STAKING_QUERY:bool =
+        std::env::var("ENABLE_STAKING_QUERY")
+            .map(|s| s.parse::<bool>().unwrap_or(false))
+            .unwrap_or(false);
 }
 
 // #[cfg(feature = "debug_env")]
@@ -70,6 +80,7 @@ pub fn info(s: &mut ABCISubmissionServer, req: &RequestInfo) -> ResponseInfo {
     let mut resp = ResponseInfo::new();
 
     let mut la = s.la.write();
+
     let state = la.get_committed_state().write();
 
     let commitment = state.get_state_commitment();
@@ -101,7 +112,97 @@ pub fn info(s: &mut ABCISubmissionServer, req: &RequestInfo) -> ResponseInfo {
 }
 
 pub fn query(s: &mut ABCISubmissionServer, req: &RequestQuery) -> ResponseQuery {
-    s.account_base_app.write().query(req)
+    let log_found = || "found".to_string();
+    if *ENABLE_STAKING_QUERY {
+        let mut resp = ResponseQuery::default();
+
+        match req.path.as_str() {
+            "/delegations" => {
+                let la = s.la.read();
+                let state = la.get_committed_state().read();
+                let staking = state.get_staking();
+                let h = staking.cur_height();
+
+                //reduce fraction.
+                let return_rate = &state.staking_get_block_rewards_rate();
+
+                #[derive(Serialize)]
+                struct DelegationResponse<'a> {
+                    global_delegation_records_map:
+                        &'a BTreeMap<XfrPublicKey, Delegation>,
+                    validator_addr_map:
+                        Option<&'a BTreeMap<TendermintAddr, XfrPublicKey>>,
+                    return_rate: &'a [u128],
+                }
+
+                let info = serde_json::to_string(&DelegationResponse {
+                    global_delegation_records_map: staking
+                        .get_global_delegation_records(),
+                    validator_addr_map: staking
+                        .validator_get_current()
+                        .map(|v| v.get_validator_addr_map()),
+                    return_rate,
+                })
+                .unwrap();
+
+                resp.height = h as i64;
+                resp.log = log_found();
+                resp.info = info;
+                resp
+            }
+            "/validators" => {
+                let la = s.la.read();
+                let state = la.get_committed_state().read();
+                let staking = state.get_staking();
+                let height = staking.cur_height();
+                let validators = match staking.validator_get_effective_at_height(height)
+                {
+                    Some(v) => v,
+                    _ => {
+                        resp.log =
+                            format!("Validators is not found at height {}.", height);
+                        resp.code = 404;
+                        return resp;
+                    }
+                };
+
+                resp.log = log_found();
+                resp.info =
+                    serde_json::to_string(&json!({ "validators": validators })).unwrap();
+                resp
+            }
+            "/block" => {
+                let height = req.height;
+                if height <= 0 {
+                    resp.log = "Bad request, height must be set.".to_owned();
+                    resp.code = 400;
+                    resp
+                } else {
+                    let la = s.la.read();
+                    let state = la.get_committed_state().read();
+                    if let Some(block) = state.blocks.get(height as _) {
+                        resp.info = log_found();
+                        resp.info = serde_json::to_string(&block).unwrap();
+                    } else {
+                        resp.info = format!("Block is not found at height {}.", height);
+                        resp.code = 404;
+                    }
+                    resp
+                }
+            }
+            _ => s.account_base_app.write().query(req),
+        }
+    } else {
+        match req.path.as_str() {
+            "/delegations" | "/validators" | "/block" => {
+                let mut resp = ResponseQuery::default();
+                resp.code = 403;
+                resp.log = "Delegation info is disabled, set env var `ENABLE_STAKING_QUERY=true` to enable it.".to_owned();
+                resp
+            }
+            _ => s.account_base_app.write().query(req),
+        }
+    }
 }
 
 pub fn init_chain(
@@ -236,7 +337,6 @@ pub fn deliver_tx(
                             td_height, tx
                         );
                     }
-
                     if *KEEP_HIST {
                         // set attr(tags) if any, only needed on a fullnode
                         let attr = utils::gen_tendermint_attr(&tx);
@@ -260,7 +360,7 @@ pub fn deliver_tx(
                         if let Err(err) =
                             s.account_base_app.write().deliver_findora_tx(&tx)
                         {
-                            log::info!(target: "abciapp", "deliver convert account tx failed: {:?}", err);
+                            log::error!(target: "abciapp", "deliver convert account tx failed: {:?}", err);
 
                             resp.code = 1;
                             resp.log =
@@ -352,6 +452,12 @@ pub fn end_block(
     IN_SAFE_ITV.swap(false, Ordering::Relaxed);
     let mut la = s.la.write();
 
+    if td_height <= CFG.checkpoint.disable_evm_block_height
+        || td_height >= CFG.checkpoint.enable_frc20_height
+    {
+        let _ = s.account_base_app.write().end_block(req);
+    }
+
     // mint coinbase, cache system transactions to ledger
     {
         let laa = la.get_committed_state().read();
@@ -382,19 +488,12 @@ pub fn end_block(
         &begin_block_req.byzantine_validators.as_slice(),
     );
 
-    if td_height <= CFG.checkpoint.disable_evm_block_height
-        || td_height >= CFG.checkpoint.enable_frc20_height
-    {
-        let _ = s.account_base_app.write().end_block(req);
-    }
-
     resp
 }
 
 pub fn commit(s: &mut ABCISubmissionServer, req: &RequestCommit) -> ResponseCommit {
     let la = s.la.write();
     let mut state = la.get_committed_state().write();
-    state_checkpoint(&state);
 
     // will change `struct LedgerStatus`
     let td_height = TENDERMINT_BLOCK_HEIGHT.load(Ordering::Relaxed);
@@ -402,6 +501,8 @@ pub fn commit(s: &mut ABCISubmissionServer, req: &RequestCommit) -> ResponseComm
 
     // cache last block for QueryServer
     pnk!(api_cache::update_api_cache(&mut state));
+
+    state_checkpoint(&state);
 
     // snapshot them finally
     let path = format!("{}/{}", &CFG.ledger_dir, &state.get_status().snapshot_file);
