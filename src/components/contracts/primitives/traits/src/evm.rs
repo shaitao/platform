@@ -56,7 +56,8 @@ pub trait FeeCalculator {
 impl FeeCalculator for () {
     fn min_gas_price() -> U256 {
         // 10 GWEI, min gas limit: 21000, min gas price must > 50_0000_0000
-        U256::from(100_0000_0000_u64)
+        //U256::from(100_0000_0000_u64)
+        U256::from(60_0000_0000_u64)
     }
 }
 
