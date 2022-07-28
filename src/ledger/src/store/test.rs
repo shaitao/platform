@@ -222,11 +222,13 @@ fn test_asset_transfer() {
         .unwrap()
         .remove(&temp_sid)
         .unwrap();
+    ledger.api_cache.as_mut().unwrap().state_commitment_version =
+        ledger.status.state_commitment_versions.last();
     let state_commitment = ledger.get_state_commitment().0;
 
     for txo_id in &txos {
         assert!(ledger.status.utxos.contains_key(&txo_id));
-        let utxo_status = ledger.get_utxo_status(*txo_id);
+        let utxo_status = ledger.get_utxo_status(*txo_id).unwrap();
         assert!(utxo_status.is_valid(state_commitment.clone()));
         assert!(utxo_status.status == UtxoStatus::Unspent);
     }
@@ -285,9 +287,11 @@ fn test_asset_transfer() {
         .unwrap()
         .remove(&temp_sid)
         .unwrap();
+    ledger.api_cache.as_mut().unwrap().state_commitment_version =
+        ledger.status.state_commitment_versions.last();
     // Ensure that previous txo is now spent
     let state_commitment = ledger.get_state_commitment().0;
-    let utxo_status = ledger.get_utxo_status(TxoSID(0));
+    let utxo_status = ledger.get_utxo_status(TxoSID(0)).unwrap();
     assert!(utxo_status.is_valid(state_commitment.clone()));
     assert!(!input_bar_proof.is_valid(state_commitment));
     assert!(utxo_status.status == UtxoStatus::Spent);
@@ -408,12 +412,14 @@ fn asset_issued() {
 
     let transaction = ledger.get_transaction(txn_sid).unwrap();
     let txn_id = transaction.finalized_txn.tx_id;
+    ledger.api_cache.as_mut().unwrap().state_commitment_version =
+        ledger.status.state_commitment_versions.last();
     let state_commitment_and_version = ledger.get_state_commitment();
 
     println!("utxos = {:?}", ledger.status.utxos);
     for txo_id in txos {
         assert!(ledger.status.utxos.contains_key(&txo_id));
-        let utxo_status = ledger.get_utxo_status(txo_id);
+        let utxo_status = ledger.get_utxo_status(txo_id).unwrap();
         assert!(utxo_status.is_valid(state_commitment_and_version.0.clone()));
         assert!(utxo_status.status == UtxoStatus::Unspent);
     }
