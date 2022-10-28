@@ -33,7 +33,7 @@ bech32 = "0.7.2"
 getrandom = { version = "0.2", features = ["js"] }
 
 zei = { git = "https://github.com/FindoraNetwork/zei", branch = "stable-main" }
-ruc = "1.0"
+ruc = "3.0"
 
 finutils = { path = "../finutils", default-features = false }
 globutils = { path = "../../libs/globutils" }
