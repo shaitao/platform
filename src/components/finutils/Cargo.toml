@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 attohttpc = { version = "0.18", default-features = false, features = ["compress", "json", "tls-rustls"] }
 base64 = "0.12"
-clap = { version = "2.33.3", features = ["yaml"] }
+clap = { version = "4.0.18", features = ["yaml"] }
 curve25519-dalek = { version = "3.0", features = ["serde"] }
 digest = '0.10'
 hex = "0.4.2"
