@@ -6,6 +6,12 @@
 //! This module is the library part of FN.
 //!
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod dev;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ddev;
+
 pub mod evm;
 pub mod utils;
 
@@ -84,7 +90,7 @@ pub fn staker_update(cr: Option<&str>, memo: Option<StakerMemo>) -> Result<()> {
         .map(|op| builder.add_operation(op))?;
 
     let mut tx = builder.take_transaction();
-    tx.sign(&kp);
+    tx.sign_to_map(&kp);
 
     utils::send_tx(&tx).c(d!())
 }
@@ -150,7 +156,7 @@ pub fn stake(
     .map(|principal_op| builder.add_operation(principal_op))?;
 
     let mut tx = builder.take_transaction();
-    tx.sign(&kp);
+    tx.sign_to_map(&kp);
 
     utils::send_tx(&tx).c(d!())
 }
@@ -187,8 +193,10 @@ pub fn stake_append(
     )
     .c(d!())
     .map(|principal_op| builder.add_operation(principal_op))?;
+    let mut tx = builder.take_transaction();
+    tx.sign_to_map(&kp);
 
-    utils::send_tx(&builder.take_transaction()).c(d!())
+    utils::send_tx(&tx).c(d!())
 }
 
 /// Withdraw Fra token from findora network for a staker
@@ -236,7 +244,7 @@ pub fn unstake(
     })?;
 
     let mut tx = builder.take_transaction();
-    tx.sign(&kp);
+    tx.sign_to_map(&kp);
 
     utils::send_tx(&tx).c(d!())
 }
@@ -259,7 +267,7 @@ pub fn claim(am: Option<&str>, sk_str: Option<&str>) -> Result<()> {
     })?;
 
     let mut tx = builder.take_transaction();
-    tx.sign(&kp);
+    tx.sign_to_map(&kp);
 
     utils::send_tx(&tx).c(d!())
 }
@@ -544,8 +552,8 @@ pub fn convert_commission_rate(cr: f64) -> Result<[u64; 2]> {
 }
 
 #[allow(missing_docs)]
-pub fn gen_key_and_print() {
-    let (m, k, kp) = loop {
+pub fn gen_key() -> (String, String, String, XfrKeyPair) {
+    let (mnemonic, key, kp) = loop {
         let mnemonic = pnk!(wallet::generate_mnemonic_custom(24, "en"));
         let kp = pnk!(wallet::restore_keypair_from_mnemonic_default(&mnemonic));
         if let Some(key) = serde_json::to_string_pretty(&kp)
@@ -555,10 +563,18 @@ pub fn gen_key_and_print() {
             break (mnemonic, key, kp);
         }
     };
+
     let wallet_addr = wallet::public_key_to_bech32(kp.get_pk_ref());
+
+    (wallet_addr, mnemonic, key, kp)
+}
+
+#[allow(missing_docs)]
+pub fn gen_key_and_print() {
+    let (wallet_addr, mnemonic, key, _) = gen_key();
     println!(
         "\n\x1b[31;01mWallet Address:\x1b[00m {}\n\x1b[31;01mMnemonic:\x1b[00m {}\n\x1b[31;01mKey:\x1b[00m {}\n",
-        wallet_addr, m, k
+        wallet_addr, mnemonic, key
     );
 }
 
@@ -654,7 +670,7 @@ fn gen_undelegate_tx(
     }
 
     let mut tx = builder.take_transaction();
-    tx.sign(owner_kp);
+    tx.sign_to_map(owner_kp);
 
     Ok(tx)
 }
@@ -681,7 +697,8 @@ fn gen_delegate_tx(
     })?;
 
     let mut tx = builder.take_transaction();
-    tx.sign(owner_kp);
+
+    tx.sign_to_map(owner_kp);
 
     Ok(tx)
 }
@@ -734,7 +751,7 @@ pub fn create_asset_x(
         .map(|op| builder.add_operation(op))?;
 
     let mut tx = builder.take_transaction();
-    tx.sign(kp);
+    tx.sign_to_map(kp);
 
     utils::send_tx(&tx).map(|_| code)
 }
@@ -776,7 +793,7 @@ pub fn issue_asset_x(
         .map(|op| builder.add_operation(op))?;
 
     let mut tx = builder.take_transaction();
-    tx.sign(kp);
+    tx.sign_to_map(kp);
 
     utils::send_tx(&tx)
 }
@@ -811,7 +828,7 @@ pub fn replace_staker(
 
     builder.add_operation_replace_staker(&keypair, target_pubkey, new_td_addr_pk)?;
     let mut tx = builder.take_transaction();
-    tx.sign(&keypair);
+    tx.sign_to_map(&keypair);
 
     utils::send_tx(&tx).c(d!())?;
     Ok(())

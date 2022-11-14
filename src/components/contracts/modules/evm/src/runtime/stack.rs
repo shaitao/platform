@@ -3,17 +3,21 @@ use config::abci::global_cfg::CFG;
 use ethereum_types::{H160, H256, U256};
 use evm::{
     backend::Backend,
-    executor::{StackState, StackSubstateMetadata},
+    executor::stack::{Accessed, StackState, StackSubstateMetadata},
     ExitError, Transfer,
 };
+use fin_db::FinDB;
 use fp_core::{context::Context, macros::Get};
 use fp_evm::{Log, Vicinity};
 use fp_storage::{BorrowMut, DerefMut};
-use fp_traits::{account::AccountAsset, evm::BlockHashMapping};
+use fp_traits::{
+    account::AccountAsset,
+    evm::{BlockHashMapping, FeeCalculator},
+};
 use fp_utils::timestamp_converter;
 use log::info;
 use std::{collections::btree_set::BTreeSet, marker::PhantomData, mem};
-use storage::{db::FinDB, state::State};
+use storage::state::State;
 
 pub struct FindoraStackSubstate<'context, 'config> {
     pub ctx: &'context Context,
@@ -21,7 +25,7 @@ pub struct FindoraStackSubstate<'context, 'config> {
     pub deletes: BTreeSet<H160>,
     pub logs: Vec<Log>,
     pub parent: Option<Box<FindoraStackSubstate<'context, 'config>>>,
-    pub substate: State<FinDB>,
+    pub substate: Option<State<FinDB>>,
 }
 
 impl<'context, 'config> FindoraStackSubstate<'context, 'config> {
@@ -34,7 +38,16 @@ impl<'context, 'config> FindoraStackSubstate<'context, 'config> {
     }
 
     pub fn enter(&mut self, gas_limit: u64, is_static: bool) {
-        let substate = (*self.ctx.state.read()).substate();
+        let mut substate = None;
+        if self.ctx.header.height < CFG.checkpoint.tx_revert_on_error_height {
+            self.ctx.state.write().commit_session(); // before substate
+        } else if self.ctx.header.height >= CFG.checkpoint.evm_substate_v2_height {
+            self.ctx.state.write().stack_push(); // substate v2
+        } else if self.ctx.header.height >= CFG.checkpoint.evm_substate_height {
+            substate = Some((*self.ctx.state.read()).substate()); // substate v1
+        } else {
+            // else does nothing
+        }
 
         let mut entering = Self {
             ctx: self.ctx,
@@ -57,6 +70,14 @@ impl<'context, 'config> FindoraStackSubstate<'context, 'config> {
         self.logs.append(&mut exited.logs);
         self.deletes.append(&mut exited.deletes);
 
+        if self.ctx.header.height < CFG.checkpoint.tx_revert_on_error_height {
+            self.ctx.state.write().commit_session(); // before substate
+        } else if self.ctx.header.height >= CFG.checkpoint.evm_substate_v2_height {
+            self.ctx.state.write().stack_commit(); // substate v2
+        } else {
+            // substate v1 and else do nothing
+        }
+
         Ok(())
     }
 
@@ -65,8 +86,15 @@ impl<'context, 'config> FindoraStackSubstate<'context, 'config> {
         mem::swap(&mut exited, self);
         self.metadata.swallow_revert(exited.metadata)?;
 
-        if self.ctx.header.height >= CFG.checkpoint.evm_substate_height {
-            let _ = mem::replace(self.ctx.state.write().deref_mut(), exited.substate);
+        if self.ctx.header.height < CFG.checkpoint.tx_revert_on_error_height {
+            self.ctx.state.write().discard_session(); // before substate
+        } else if self.ctx.header.height >= CFG.checkpoint.evm_substate_v2_height {
+            self.ctx.state.write().stack_discard(); // substate v2
+        } else if self.ctx.header.height >= CFG.checkpoint.evm_substate_height {
+            let _ = mem::replace(
+                self.ctx.state.write().deref_mut(),
+                exited.substate.unwrap(),
+            ); // substate v1
         } else {
             info!(target: "evm", "EVM stack exit_revert(), height: {:?}", self.ctx.header.height);
         }
@@ -79,8 +107,15 @@ impl<'context, 'config> FindoraStackSubstate<'context, 'config> {
         mem::swap(&mut exited, self);
         self.metadata.swallow_discard(exited.metadata)?;
 
-        if self.ctx.header.height >= CFG.checkpoint.evm_substate_height {
-            let _ = mem::replace(self.ctx.state.write().deref_mut(), exited.substate);
+        if self.ctx.header.height < CFG.checkpoint.tx_revert_on_error_height {
+            self.ctx.state.write().discard_session(); // before substate
+        } else if self.ctx.header.height >= CFG.checkpoint.evm_substate_v2_height {
+            self.ctx.state.write().stack_discard(); // substate v2
+        } else if self.ctx.header.height >= CFG.checkpoint.evm_substate_height {
+            let _ = mem::replace(
+                self.ctx.state.write().deref_mut(),
+                exited.substate.unwrap(),
+            ); // substate v1
         } else {
             info!(target: "evm", "EVM stack exit_discard(), height: {:?}", self.ctx.header.height);
         }
@@ -111,6 +146,19 @@ impl<'context, 'config> FindoraStackSubstate<'context, 'config> {
             data,
         });
     }
+
+    pub fn recursive_is_cold<F: Fn(&Accessed) -> bool>(&self, f: &F) -> bool {
+        let local_is_accessed =
+            self.metadata.accessed().as_ref().map(f).unwrap_or(false);
+        if local_is_accessed {
+            false
+        } else {
+            self.parent
+                .as_ref()
+                .map(|p| p.recursive_is_cold(f))
+                .unwrap_or(true)
+        }
+    }
 }
 
 /// Findora backend for EVM.
@@ -130,7 +178,14 @@ impl<'context, 'vicinity, 'config, C: Config>
         vicinity: &'vicinity Vicinity,
         metadata: StackSubstateMetadata<'config>,
     ) -> Self {
-        let substate = (*ctx.state.read()).substate();
+        // two versions of EVM substate implementation
+        let mut substate = None;
+        if ctx.header.height >= CFG.checkpoint.evm_substate_height
+            && ctx.header.height < CFG.checkpoint.evm_substate_v2_height
+        {
+            substate = Some((*ctx.state.read()).substate());
+        }
+
         Self {
             ctx,
             vicinity,
@@ -212,6 +267,10 @@ impl<'context, 'vicinity, 'config, C: Config> Backend
     fn original_storage(&self, _address: H160, _index: H256) -> Option<H256> {
         None
     }
+
+    fn block_base_fee_per_gas(&self) -> U256 {
+        C::FeeCalculator::min_gas_price()
+    }
 }
 
 impl<'context, 'vicinity, 'config, C: Config> StackState<'config>
@@ -251,7 +310,18 @@ impl<'context, 'vicinity, 'config, C: Config> StackState<'config>
 
     fn inc_nonce(&mut self, address: H160) {
         let account_id = C::AddressMapping::convert_to_account_id(address);
-        let _ = C::AccountAsset::inc_nonce(self.ctx, &account_id);
+        let _nonce = C::AccountAsset::inc_nonce(self.ctx, &account_id);
+
+        #[cfg(feature = "enterprise-web3")]
+        {
+            use enterprise_web3::{NONCE_MAP, WEB3_SERVICE_START_HEIGHT};
+            if self.ctx.header.height as u64 > *WEB3_SERVICE_START_HEIGHT {
+                let mut nonce_map = NONCE_MAP.lock().expect("get nonce map error");
+                if let Ok(nonce) = _nonce {
+                    nonce_map.insert(address, nonce);
+                }
+            }
+        }
     }
 
     fn set_storage(&mut self, address: H160, index: H256, value: H256) {
@@ -291,6 +361,49 @@ impl<'context, 'vicinity, 'config, C: Config> StackState<'config>
                 );
             }
         }
+
+        #[cfg(feature = "enterprise-web3")]
+        {
+            use enterprise_web3::{
+                State, PENDING_STATE_UPDATE_LIST, REMOVE_PENDING_STATE_UPDATE_LIST,
+                STATE_UPDATE_LIST, WEB3_SERVICE_START_HEIGHT,
+            };
+            use fp_core::context::RunTxMode;
+            if self.ctx.header.height as u64 > *WEB3_SERVICE_START_HEIGHT {
+                if RunTxMode::Deliver == self.ctx.run_mode {
+                    let mut remove_pending_state_list = REMOVE_PENDING_STATE_UPDATE_LIST
+                        .lock()
+                        .expect("get code map fail");
+                    remove_pending_state_list.push((address, index));
+
+                    if let Ok(mut state_list) = STATE_UPDATE_LIST.lock() {
+                        state_list.push(State {
+                            height: self.ctx.header.height as u32,
+                            address,
+                            index,
+                            value,
+                        });
+                    } else {
+                        log::error!(
+                            target: "evm",
+                            "Failed push state update to STATE_UPDATE_LIST for {:?} [index: {:?}, value: {:?}]",
+                            address,
+                            index,
+                            value,
+                        )
+                    }
+                } else {
+                    let mut state_list =
+                        PENDING_STATE_UPDATE_LIST.lock().expect("get code map fail");
+                    state_list.push(State {
+                        height: 0,
+                        address,
+                        index,
+                        value,
+                    });
+                }
+            }
+        }
     }
 
     fn reset_storage(&mut self, address: H160) {
@@ -316,7 +429,12 @@ impl<'context, 'vicinity, 'config, C: Config> StackState<'config>
            code_len,
             address
         );
-        if let Err(e) = App::<C>::create_account(self.ctx, address.into(), code) {
+        #[cfg(feature = "enterprise-web3")]
+        let code_clone = code.clone();
+
+        let result = App::<C>::create_account(self.ctx, address.into(), code);
+
+        if let Err(e) = result {
             log::error!(
                 target: "evm",
                 "Failed inserting code ({} bytes) at {:?}, error: {:?}",
@@ -324,6 +442,28 @@ impl<'context, 'vicinity, 'config, C: Config> StackState<'config>
                 address,
                     e
             );
+        } else {
+            #[cfg(feature = "enterprise-web3")]
+            {
+                use enterprise_web3::{
+                    CODE_MAP, PENDING_CODE_MAP, REMOVE_PENDING_CODE_MAP,
+                    WEB3_SERVICE_START_HEIGHT,
+                };
+                use fp_core::context::RunTxMode;
+                if self.ctx.header.height as u64 > *WEB3_SERVICE_START_HEIGHT {
+                    if RunTxMode::Deliver == self.ctx.run_mode {
+                        let mut code_map = CODE_MAP.lock().expect("get code map fail");
+                        code_map.insert(address, code_clone.clone());
+                        let mut remove_pending_code_map =
+                            REMOVE_PENDING_CODE_MAP.lock().expect("get code map fail");
+                        remove_pending_code_map.push(address);
+                    } else {
+                        let mut code_map =
+                            PENDING_CODE_MAP.lock().expect("get code map fail");
+                        code_map.insert(address, code_clone);
+                    }
+                }
+            }
         }
     }
 
@@ -349,5 +489,16 @@ impl<'context, 'vicinity, 'config, C: Config> StackState<'config>
         // EVM module considers all accounts to exist, and distinguish
         // only empty and non-empty accounts. This avoids many of the
         // subtle issues in EIP-161.
+    }
+
+    fn is_cold(&self, address: H160) -> bool {
+        self.substate
+            .recursive_is_cold(&|a| a.accessed_addresses.contains(&address))
+    }
+
+    fn is_storage_cold(&self, address: H160, key: H256) -> bool {
+        self.substate.recursive_is_cold(&|a: &Accessed| {
+            a.accessed_storage.contains(&(address, key))
+        })
     }
 }

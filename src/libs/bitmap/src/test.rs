@@ -125,14 +125,14 @@ fn test_block() {
 #[test]
 fn test_basic_bitmap() {
     let path = "basic_bitmap";
-    let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(path);
 
     // Create a new bitmap.
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
-        .open(&path)
+        .open(path)
         .unwrap();
 
     let mut bitmap = BitMap::create(file).unwrap();
@@ -158,7 +158,7 @@ fn test_basic_bitmap() {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
-        .open(&path)
+        .open(path)
         .unwrap();
 
     let mut bitmap = BitMap::open(file).unwrap();
@@ -297,7 +297,7 @@ fn test_basic_bitmap() {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
-        .open(&path)
+        .open(path)
         .unwrap();
 
     let mut bitmap = BitMap::open(file).unwrap();
@@ -330,11 +330,11 @@ fn test_basic_bitmap() {
     }
 
     let mut rng = rand::thread_rng();
-    let mut countdown = rng.gen_range(0, 50);
+    let mut countdown = rng.gen_range(0..50);
 
     // Manipulate some random bits and check the checksumming.
     for i in 0..4000 {
-        let bit = rng.gen_range(0, bitmap.size() + 1);
+        let bit = rng.gen_range(0..bitmap.size() + 1);
         let current = if bit < bitmap.size {
             bitmap.query(bit).unwrap()
         } else {
@@ -352,13 +352,13 @@ fn test_basic_bitmap() {
 
         if countdown <= 0 {
             validate_checksum(&mut bitmap, "random ".to_owned() + &i.to_string());
-            countdown = rng.gen_range(0, 50);
+            countdown = rng.gen_range(0..50);
         }
     }
 
     drop(bitmap);
 
-    let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(path);
 }
 
 #[test]

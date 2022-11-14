@@ -2,7 +2,8 @@ use crate::storage::*;
 use crate::{App, Config, ContractLog, TransactionExecuted};
 use config::abci::global_cfg::CFG;
 use ethereum::{
-    BlockV0 as Block, LegacyTransactionMessage, Receipt, TransactionV0 as Transaction,
+    BlockV0 as Block, LegacyTransactionMessage, ReceiptV0 as Receipt,
+    TransactionV0 as Transaction,
 };
 use ethereum_types::{Bloom, BloomInput, H160, H256, H64, U256};
 use evm::{ExitFatal, ExitReason};
@@ -24,7 +25,43 @@ use log::{debug, info};
 use ruc::*;
 use sha3::{Digest, Keccak256};
 
+#[cfg(feature = "web3_service")]
+use enterprise_web3::{TxState, BLOCK, RECEIPTS, TXS, WEB3_SERVICE_START_HEIGHT};
+
 impl<C: Config> App<C> {
+    pub fn recover_signer_fast(
+        ctx: &Context,
+        transaction: &Transaction,
+    ) -> Option<H160> {
+        let transaction_hash =
+            H256::from_slice(Keccak256::digest(&rlp::encode(transaction)).as_slice());
+
+        // Check historical cache first for Deliver Context, while holding the read lock
+        if ctx.run_mode == RunTxMode::Deliver {
+            let history_1 = ctx.eth_cache.history_1.read();
+            let history_n = ctx.eth_cache.history_n.read();
+
+            if let Some(signer) = history_1
+                .get(&transaction_hash)
+                .or_else(|| history_n.get(&transaction_hash))
+            {
+                return *signer;
+            }
+        }
+
+        // recover_signer() calculation is necessary in 2 scenarios:
+        // 1- During CheckTx on fresh transaction
+        // 2- During DeliverTx if we NEVER see the transaction's signer in history (cache)
+        let mut txn_signers = ctx.eth_cache.current.write();
+        match txn_signers.get(&transaction_hash) {
+            Some(signer) => *signer,
+            None => Self::recover_signer(transaction).map(|signer| {
+                txn_signers.insert(transaction_hash, Some(signer));
+                signer
+            }),
+        }
+    }
+
     pub fn recover_signer(transaction: &Transaction) -> Option<H160> {
         let mut sig = [0u8; 65];
         let mut msg = [0u8; 32];
@@ -54,12 +91,9 @@ impl<C: Config> App<C> {
         let mut logs_bloom = Bloom::default();
         let mut is_store_block = true;
 
-        let pending_txs: Vec<(Transaction, TransactionStatus, Receipt)> = {
-            let mut txns_guard = DELIVER_PENDING_TRANSACTIONS.lock().c(d!())?;
-            let txns = txns_guard.get_mut();
-            let pending_txns = txns.clone();
-            *txns = None;
-            pending_txns.unwrap_or_default()
+        let pending_txs = {
+            let mut txns = DELIVER_PENDING_TRANSACTIONS.lock().c(d!())?;
+            std::mem::take(&mut *txns)
         };
 
         if block_number < U256::from(CFG.checkpoint.evm_first_block_height)
@@ -126,6 +160,50 @@ impl<C: Config> App<C> {
                 &block_hash,
                 &statuses,
             )?;
+
+            #[cfg(feature = "web3_service")]
+            {
+                use ethereum::{BlockAny, FrontierReceiptData, ReceiptAny};
+
+                if block_number.as_u64() > *WEB3_SERVICE_START_HEIGHT {
+                    if let Ok(mut b) = BLOCK.lock() {
+                        if b.is_none() {
+                            let block = BlockAny::from(block);
+                            b.replace(block);
+                        } else {
+                            log::error!("the block is not none");
+                        }
+                    }
+                    if let Ok(mut txs) = TXS.lock() {
+                        for status in statuses.iter() {
+                            let tx_status = TxState {
+                                transaction_hash: status.transaction_hash,
+                                transaction_index: status.transaction_index,
+                                from: status.from,
+                                to: status.to,
+                                contract_address: status.contract_address,
+                                logs: status.logs.clone(),
+                                logs_bloom: status.logs_bloom.clone(),
+                            };
+
+                            txs.push(tx_status);
+                        }
+                    }
+
+                    if let Ok(mut rs) = RECEIPTS.lock() {
+                        for receipt in receipts.iter() {
+                            let f = FrontierReceiptData {
+                                state_root: receipt.state_root,
+                                used_gas: receipt.used_gas,
+                                logs_bloom: receipt.logs_bloom,
+                                logs: receipt.logs.clone(),
+                            };
+
+                            rs.push(ReceiptAny::Frontier(f));
+                        }
+                    }
+                }
+            }
         }
 
         debug!(target: "ethereum", "store new ethereum block: {}", block_number);
@@ -138,7 +216,7 @@ impl<C: Config> App<C> {
         let mut events = vec![];
         let just_check = ctx.run_mode != RunTxMode::Deliver;
 
-        let source = Self::recover_signer(&transaction)
+        let source = Self::recover_signer_fast(ctx, &transaction)
             .ok_or_else(|| eg!("ExecuteTransaction: InvalidSignature"))?;
 
         let transaction_hash =
@@ -147,9 +225,8 @@ impl<C: Config> App<C> {
         let transaction_index = if just_check {
             0
         } else {
-            let mut txns_guard = DELIVER_PENDING_TRANSACTIONS.lock().c(d!())?;
-            let txns = txns_guard.get_mut();
-            txns.as_ref().map_or(0, |txns| txns.len()) as u32
+            let txns = DELIVER_PENDING_TRANSACTIONS.lock().c(d!())?;
+            txns.len() as u32
         };
 
         let gas_limit = transaction.gas_limit;
@@ -246,7 +323,7 @@ impl<C: Config> App<C> {
             ));
         }
 
-        let (code, message) = match reason {
+        let (mut code, message) = match reason {
             ExitReason::Succeed(_) => (0, String::new()),
             // code 1 indicates `Failed to execute evm function`, see above
             ExitReason::Error(_) => (2, "EVM error".to_string()),
@@ -271,7 +348,11 @@ impl<C: Config> App<C> {
             info!(target: "ethereum", "evm execute result: reason {:?} status {:?} used_gas {}", reason, status, used_gas);
         }
 
-        let receipt = ethereum::Receipt {
+        if ctx.header.height < CFG.checkpoint.tx_revert_on_error_height {
+            code = 0;
+        }
+
+        let receipt = ethereum::ReceiptV0 {
             state_root: match reason {
                 ExitReason::Succeed(_) => H256::from_low_u64_be(1),
                 ExitReason::Error(_) => H256::from_low_u64_le(0),
@@ -285,21 +366,23 @@ impl<C: Config> App<C> {
 
         if !just_check {
             {
-                let mut pending_txs_guard =
-                    DELIVER_PENDING_TRANSACTIONS.lock().c(d!())?;
-                let pending_txs = pending_txs_guard.get_mut();
-                if let Some(txs) = pending_txs {
-                    txs.push((transaction, status, receipt));
-                } else {
-                    *pending_txs = Some(vec![(transaction, status, receipt)]);
-                };
+                let mut pending_txs = DELIVER_PENDING_TRANSACTIONS.lock().c(d!())?;
+                pending_txs.push((transaction, status, receipt));
             }
 
-            TransactionIndex::insert(
-                ctx.db.write().borrow_mut(),
-                &HA256::new(transaction_hash),
-                &(ctx.header.height.into(), transaction_index),
-            )?;
+            if ctx.header.height < CFG.checkpoint.tx_revert_on_error_height {
+                TransactionIndex::insert(
+                    ctx.state.write().borrow_mut(),
+                    &HA256::new(transaction_hash),
+                    &(ctx.header.height.into(), transaction_index),
+                )?;
+            } else {
+                TransactionIndex::insert(
+                    ctx.db.write().borrow_mut(),
+                    &HA256::new(transaction_hash),
+                    &(ctx.header.height.into(), transaction_index),
+                )?;
+            }
         }
 
         events.push(Event::emit_event(
@@ -393,7 +476,7 @@ impl<C: Config> App<C> {
         &self,
         ctx: &Context,
         id: Option<BlockId>,
-    ) -> Option<Vec<ethereum::Receipt>> {
+    ) -> Option<Vec<ethereum::ReceiptV0>> {
         let hash = HA256::new(Self::block_hash(ctx, id).unwrap_or_default());
         CurrentReceipts::get(ctx.db.read().borrow(), &hash)
     }

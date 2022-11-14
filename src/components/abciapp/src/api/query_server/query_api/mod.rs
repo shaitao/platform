@@ -11,6 +11,7 @@ pub mod service;
 use {
     actix_cors::Cors,
     actix_web::{error, middleware, web, App, HttpServer},
+    config::abci::{global_cfg::CFG, CheckPointConfig},
     finutils::api::NetworkRoute,
     globutils::wallet,
     ledger::{
@@ -196,7 +197,7 @@ pub async fn get_issued_records_by_code(
 ) -> actix_web::Result<web::Json<Vec<(TxOutput, Option<OwnerMemo>)>>> {
     let server = data.read();
 
-    match AssetTypeCode::new_from_base64(&*info).c(d!()) {
+    match AssetTypeCode::new_from_base64(&info).c(d!()) {
         Ok(token_code) => {
             if let Some(records) = server.get_issued_records_by_code(&token_code) {
                 Ok(web::Json(records))
@@ -405,7 +406,7 @@ pub async fn get_related_xfrs(
     info: web::Path<String>,
 ) -> actix_web::Result<web::Json<HashSet<TxnSID>>> {
     let server = data.read();
-    if let Ok(token_code) = AssetTypeCode::new_from_base64(&*info) {
+    if let Ok(token_code) = AssetTypeCode::new_from_base64(&info) {
         if let Some(records) = server.get_related_transfers(&token_code) {
             Ok(web::Json(records))
         } else {
@@ -479,6 +480,13 @@ pub async fn get_total_supply(
     };
 
     Ok(web::Json(res))
+}
+
+#[inline(always)]
+#[allow(missing_docs)]
+pub async fn get_checkpoint(
+) -> actix_web::Result<web::Json<CheckPointConfig>, actix_web::error::Error> {
+    Ok(web::Json(CFG.checkpoint.clone()))
 }
 
 /// Structures exposed to the outside world
@@ -639,6 +647,10 @@ impl QueryApi {
                 .route(
                     &ApiRoutes::ValidatorDetail.with_arg_template("NodeAddress"),
                     web::get().to(query_validator_detail),
+                )
+                .service(
+                    web::resource("/display_checkpoint")
+                        .route(web::get().to(get_checkpoint)),
                 )
         });
 

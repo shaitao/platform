@@ -1,6 +1,8 @@
 #![deny(warnings)]
 #![allow(missing_docs)]
 
+extern crate core;
+
 mod basic;
 pub mod impls;
 pub mod precompile;
@@ -8,9 +10,11 @@ pub mod runtime;
 
 use abci::{RequestQuery, ResponseQuery};
 use ethereum_types::U256;
+use evm::executor::stack::PrecompileSet as EvmPrecompileSet;
 use fp_core::{
     context::Context,
     macros::Get,
+    macros::Get2,
     module::AppModule,
     transaction::{ActionResult, Executable},
 };
@@ -48,6 +52,8 @@ pub trait Config {
     type FeeCalculator: FeeCalculator;
     /// Precompiles associated with this EVM engine.
     type Precompiles: PrecompileSet;
+    type PrecompilesType: EvmPrecompileSet;
+    type PrecompilesValue: Get2<Self::PrecompilesType, Context>;
 }
 
 pub mod storage {
