@@ -71,7 +71,7 @@ fs2 = "0.4"
 storage = { git = "https://github.com/FindoraNetwork/storage.git", tag = "v0.2.2", optional = true }
 fin_db = { git = "https://github.com/FindoraNetwork/storage.git", tag = "v0.2.2", optional = true }
 sparse_merkle_tree = { path = "../libs/sparse_merkle_tree" }
-noah-accumulators = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.0" }
+noah-accumulators = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 parking_lot = { version = "0.11", features = ["wasm-bindgen"] }
