@@ -27,7 +27,7 @@ getrandom = "0.2"
 
 noah = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.0" }
 noah-crypto = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.0" }
-noah-algebra = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.0" }
+noah-algebra = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.4.1" }
 
 ruc = "1.0"
 rucv3 = { package = "ruc", version = "3.0" }
