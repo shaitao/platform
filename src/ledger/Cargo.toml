@@ -35,7 +35,7 @@ itertools = "0.10"
 ruc = "1.0"
 
 noah  = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.2" }
-noah-crypto  = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.2" }
+noah-crypto  = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.4.3" }
 noah-algebra  = { git = "https://github.com/FindoraNetwork/noah", tag = "v0.3.2" }
 bulletproofs = { git = "https://github.com/FindoraNetwork/bulletproofs", tag = "v1.0.1-f" }
 
