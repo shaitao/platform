@@ -61,7 +61,7 @@ enterprise-web3 = { path = "../contracts/primitives/enterprise-web3", optional =
 
 
 [target.'cfg(target_os= "linux")'.dependencies]
-btm = "0.1.6"
+btm = "0.13.0"
 
 [dev-dependencies]
 
